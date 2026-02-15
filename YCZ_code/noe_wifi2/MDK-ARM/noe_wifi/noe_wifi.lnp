@@ -1,0 +1,28 @@
+--cpu Cortex-M3
+"noe_wifi\startup_stm32f103xb.o"
+"noe_wifi\esp8266.o"
+"noe_wifi\main.o"
+"noe_wifi\gpio.o"
+"noe_wifi\tim.o"
+"noe_wifi\usart.o"
+"noe_wifi\stm32f1xx_it.o"
+"noe_wifi\stm32f1xx_hal_msp.o"
+"noe_wifi\stm32f1xx_hal_gpio_ex.o"
+"noe_wifi\stm32f1xx_hal_tim.o"
+"noe_wifi\stm32f1xx_hal_tim_ex.o"
+"noe_wifi\stm32f1xx_hal.o"
+"noe_wifi\stm32f1xx_hal_rcc.o"
+"noe_wifi\stm32f1xx_hal_rcc_ex.o"
+"noe_wifi\stm32f1xx_hal_gpio.o"
+"noe_wifi\stm32f1xx_hal_dma.o"
+"noe_wifi\stm32f1xx_hal_cortex.o"
+"noe_wifi\stm32f1xx_hal_pwr.o"
+"noe_wifi\stm32f1xx_hal_flash.o"
+"noe_wifi\stm32f1xx_hal_flash_ex.o"
+"noe_wifi\stm32f1xx_hal_exti.o"
+"noe_wifi\stm32f1xx_hal_uart.o"
+"noe_wifi\system_stm32f1xx.o"
+--strict --scatter "noe_wifi\noe_wifi.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "noe_wifi.map" -o noe_wifi\noe_wifi.axf

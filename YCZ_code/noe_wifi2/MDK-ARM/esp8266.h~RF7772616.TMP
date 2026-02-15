@@ -1,0 +1,347 @@
+// 头文件保护宏：防止多个源文件包含时出现多重定义编译错误（必备规范）
+#ifndef __ESP8266_H__
+#define __ESP8266_H__
+
+// 第一步：先启用匿名联合体支持（针对 Keil ARMCC 编译器）
+// 放在头文件最开头、结构体定义之前，确保编译器解析结构体时已启用该功能
+#if defined (__CC_ARM)
+#pragma anon_unions
+#endif
+
+/******************************* 包含必要头文件 ***************************/
+#include "main.h"
+#include "usart.h"
+#include "gpio.h"
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdarg.h>
+
+/******************************* 全局配置 ***************************/
+#define UART_TIMEOUT_MS         1000        // 串口阻塞超时时间（单位：ms）
+#define RX_BUF_MAX_LEN          1024        // 串口1最大接收缓存字节数（存储ESP8266响应数据）
+#define UART1_TX_BUF_MAX_LEN    1024         // 串口1最大发送缓存字节数（存储待发送的AT指令）
+#define UART2_TX_BUF_MAX_LEN    1024          // 串口2最大发送缓存字节数（存储调试打印信息）
+
+/******************************* ESP8266 数据类型定义 ***************************/
+/**
+  * @brief  ESP8266 网络工作模式枚举
+  * @note   对应 AT 指令：AT+CWMODE=<mode>
+  *         该枚举值直接作为 AT 指令参数，配置模块的网络工作形态
+  */
+typedef enum
+{
+    STA     = 1,    // 客户端模式（Station Mode）：连接外部 WiFi 热点
+    AP      = 2,    // 热点模式（Access Point Mode）：创建自身 WiFi 热点
+    STA_AP  = 3     // 双模模式：同时支持 STA 模式和 AP 模式
+} ENUM_Net_ModeTypeDef;
+
+/**
+  * @brief  ESP8266 网络通信协议枚举
+  * @note   对应 AT 指令：AT+CIPSTART=<id>,"<protocol>","<ip>",<port>
+  *         用于指定与服务器建立连接的网络协议类型
+  */
+typedef enum
+{
+    NET_PROTOCOL_TCP = 0,
+    NET_PROTOCOL_UDP = 1,
+    NET_PROTOCOL_MQTT = 2,  // 安可信固件 MQTT 专属
+    NET_PROTOCOL_MAX  =3
+} ENUM_NetPro_TypeDef;
+
+/**
+  * @brief  ESP8266 网络连接 ID 枚举
+  * @note   对应 AT 指令：AT+CIPSTART=<id>,... / AT+CIPSEND=<id>,...
+  *         多连接模式下（AT+CIPMUX=1）支持 ID 0-4，单连接模式下（AT+CIPMUX=0）仅支持 ID 5
+  */
+typedef enum
+{
+    ID_NO_0 = 0,     // 多连接 ID 0（安可信固件默认单连接为 ID 0）
+    ID_NO_1 = 1,
+    ID_NO_2 = 2,
+    ID_NO_3 = 3,
+    ID_NO_4 = 4,
+    ID_NO_SINGLE = 5 // 映射到安可信固件 ID 0（单连接）
+} ENUM_ID_NO_TypeDef;
+
+// 2. 安可信 MQTT 固件核心配置宏（用户可自定义）
+#define MQTT_CLIENT_ID         "1"  											// MQTT 客户端 设备名称
+#define MQTT_USER_NAME         "IeHhID6vH1"      					// MQTT 服务器产品id
+#define MQTT_PASSWORD          "version=2018-10-31&res=products%2FIeHhID6vH1%2Fdevices%2F1&et=1799824538&method=md5&sign=8RjwUQMfoc%2BNpBxciXM6vg%3D%3D" // MQTT 服务器你的Token
+#define MQTT_cert_key_ID        0                        	// MQTT cert 证书, 参数为 0
+#define MQTT_CA_ID							0													// MQTT目前支持一套 CA 证书, 参数为 0
+#define MQTT_CONNECT_TIMEOUT   8000                      	// MQTT 连接超时（ms，安可信固件耗时略长）
+#define MQTT_CLEAN_SESSION     1                         	// 清理会话（1=清理，0=保留会话）
+#define MQTT_IP                "mqtts.heclouds.com"				// MQTT 连接IP
+#define MQTT_DUANKOU            "1883"
+#define MQTT_SUBSCRIBE_QOS      0              						 // QoS 等级（0=最多一次，1=至少一次，OneNET 推荐 0）
+#define ONENET_SUB_TOPIC_SUFFIX "$sys/%s/%s/thing/property/set"// 订阅主题固定后缀
+#define ONENET_SUB_TOPIC_Repaly	"$sys/IeHhID6vH1/1/thing/property/post/repl"
+#define ONENET_POST_TOPIC       "$sys/%s/%s/thing/property/post"      //上传主题固定格式（OneNET 属性上报主题）
+
+#define UPLOAD_JSON_ID          "1"          // JSON 报文 id（固定值，可随意填）
+#define UPLOAD_UART_TIMEOUT     5000           // UART 发送超时时间（ms）
+#define MQTT_PUB_CMD_PREFIX     "AT+MQTTPUB=0,"// MQTT 发布指令前缀
+#define ONENET_JSON_VERSION     "1.0"          // 物模型版本号
+#define ONENET_MQTT_QOS         0              // MQTT QOS 等级（固定 0，匹配指令格式）
+#define ONENET_MQTT_RETAIN      0              // MQTT Retain 标志（固定 0，匹配指令格式）
+/**
+  * @brief  ESP8266 AP 模式下热点加密方式枚举
+  * @note   对应 AT 指令：AT+CWSAP="<ssid>","<pwd>",<channel>,<encryption>
+  *         用于配置自身热点的加密方式，密码长度需匹配对应加密方式要求
+  */
+typedef enum
+{
+    OPEN           = 0,   // 开放模式：无密码，任何人可直接连接（安全性低）
+    WEP            = 1,   // WEP 加密：早期加密方式，安全性较弱（已逐步淘汰）
+    WPA_PSK        = 2,   // WPA-PSK 加密：主流加密方式，安全性较高（推荐）
+    WPA2_PSK       = 3,   // WPA2-PSK 加密：更安全的加密方式，兼容性好（推荐）
+    WPA_WPA2_PSK   = 4    // WPA/WPA2 混合加密：兼容 WPA 和 WPA2 客户端（最高兼容性）
+} ENUM_AP_PsdMode_TypeDef;
+
+/******************************* 用户配置参数 ***************************/
+#define ESP8266_WIFI_NAME    "TP-LINK_B4F2"         // WiFi名称
+#define ESP8266_ApPwd     "Qq3184986381"    // WiFi密码
+
+// esp8266.h 中添加：TCP客户端配置宏（用户可自定义）
+#define ESP8266_STA_SSID       "TP-LINK_B4F2"  // 要连接的WiFi热点名称
+#define ESP8266_STA_PWD        "Qq3184986381"     // WiFi热点密码（≥8位）
+#define TCP_SERVER_IP          "192.168.0.100" // 远端TCP服务器IP地址（需与ESP8266在同一网段）
+#define TCP_SERVER_PORT        8080            // 远端TCP服务器端口号（自定义，需与服务器一致）
+#define ESP8266_TCP_TIMEOUT    3000            // TCP连接超时时间（ms，建议≥3000）
+/******************************* 串口数据帧处理结构体定义 + 外部实例声明 ***************************/
+/**
+ * @brief  串口接收数据帧处理结构体（用于ESP8266数据接收缓存与状态标记）
+ * @note   1. 采用匿名联合体+位段设计，高效利用16位存储空间
+ *         2. 该结构体实例为外部全局变量，仅在此声明，定义在 esp8266.c 中
+ *         3. 兼容STM32 HAL库__IO宏（等价于volatile，防止编译器优化内存数据）
+ */
+struct STRUCT_USARTx_Fram
+{
+    char  Data_RX_BUF[RX_BUF_MAX_LEN];  // 串口接收数据缓冲区：存储ESP8266返回的完整响应数据
+
+    /**
+     * @brief  匿名联合体（整合整体状态与位段状态，节省存储空间）
+     * @note   InfAll（16位整体）与InfBit（位段拆分）共用同一块16位内存空间
+     */
+    union
+    {
+        __IO uint16_t InfAll;  // 接收帧状态整体（16位）：可直接赋值/读取整体状态
+
+        /**
+         * @brief  位段结构体（拆分16位状态为具体功能位，精准控制）
+         * @note   低15位（bit0~bit14）：接收数据长度；最高位（bit15）：接收完成标志
+         */
+        struct
+        {
+            __IO uint16_t FramLength     :15;  // 接收帧有效数据长度（占15位，最大支持32767字节，匹配RX_BUF_MAX_LEN）
+            __IO uint16_t FramFinishFlag :1;   // 接收帧完成标志（占1位：0=未完成，1=已完成）
+        } InfBit;
+    };
+};
+
+// OneNET 下发属性数据存储结构体（包含所有需要的字段和状态标志）
+typedef struct
+{
+    bool Alarm;        // 报警状态（false=无报警，true=有报警）
+    bool led;          // LED 控制状态（false=关闭，true=开启）
+    uint8_t light;     // 灯光亮度值（0~100）
+    bool is_valid;     // 数据是否有效（false=无效，true=有效）
+    bool is_updated;   // 数据是否更新（false=未更新，true=已更新，用于主循环判断）
+} OneNET_Property_Set_t;
+
+// 全局接收帧变量（外部可引用）
+extern OneNET_Property_Set_t g_OneNET_Property_Data;
+extern struct STRUCT_USARTx_Fram strEsp8266_Fram_Record;
+/******************************* 全局变量声明 ***************************/
+extern volatile uint8_t ucTcpClosedFlag;                     // TCP连接关闭标志位
+extern volatile bool usart1_tx_done;                        // 串口1发送完成标志（中断用）
+extern char uart1_tx_buffer[UART1_TX_BUF_MAX_LEN];           // 串口1发送缓冲区（存储AT指令）
+extern char uart2_tx_buffer[UART2_TX_BUF_MAX_LEN];           // 串口2发送缓冲区（存储调试信息）
+
+
+/******************************* 函数声明 ***************************/
+// 串口2调试打印函数（格式化输出）
+void UART2_Debug_Print(const char *fmt, ...);
+
+	// 模块初始化流程
+void ESP8266_Init(void);
+
+/**
+  * @brief  重启 ESP8266 模块
+  * @note   支持软件复位（AT+RST 指令）
+  * @param  无
+  * @retval 无
+  */
+void ESP8266_Rst(void);
+
+/**
+  * @brief  向 ESP8266 发送 AT 指令并校验响应
+  * @param  cmd：待发送的 AT 指令字符串（需包含必要的 \r\n 结尾）
+  * @param  reply1：期待的响应字符串1（NULL 表示不校验该响应）
+  * @param  reply2：期待的响应字符串2（NULL 表示不校验该响应，与 reply1 为或逻辑）
+  * @param  waittime：等待 ESP8266 响应的最大时间（单位：ms）
+  * @retval bool：true=指令发送成功且匹配到目标响应，false=发送失败或响应不匹配
+  */
+bool ESP8266_Cmd(char *cmd, char *reply1, char *reply2, uint32_t waittime);
+
+/**
+  * @brief  ESP8266 AT 指令通信测试（模块启动自检）
+  * @note   最多尝试 10 次 AT 指令交互，失败则重启模块重试
+  * @param  无
+  * @retval 无
+  */
+void ESP8266_AT_Test(void);
+
+/**
+  * @brief  选择 ESP8266 的网络工作模式
+  * @param  enumMode：网络模式枚举（STA=客户端模式，AP=热点模式，STA_AP=双模）
+  * @retval bool：true=模式配置成功，false=配置失败
+  */
+bool ESP8266_Net_Mode_Choose(ENUM_Net_ModeTypeDef enumMode);
+
+//创建 WPA2_PSK 加密热点（推荐，安全稳定）
+void ESP8266_Init_AP_Example(void);
+
+/**
+  * @brief  ESP8266 连接外部 WiFi 热点（STA 模式下）
+  * @param  pSSID：WiFi 热点名称字符串（不可为空）
+  * @param  pPassWord：WiFi 热点密码字符串（不可为空）
+  * @retval bool：true=WiFi 连接成功，false=连接失败（密码错误/热点不可达等）
+  */
+bool ESP8266_LINK_AP(char *pSSID, char *pPassWord);
+
+bool ESP8266_Scan_WiFi(void);
+
+
+/**
+  * @brief  ESP8266 创建 WiFi 热点（AP 模式下）
+  * @param  pSSID：创建的热点名称字符串
+  * @param  pPassWord：热点密码字符串（需符合加密方式要求）
+  * @param  enunPsdMode：热点加密方式枚举（OPEN=开放，WEP/WPA_PSK 等加密模式）
+  * @retval bool：true=热点创建成功，false=创建失败
+  */
+bool ESP8266_BuildAP(char *pSSID, char *pPassWord, ENUM_AP_PsdMode_TypeDef enunPsdMode);
+
+/**
+  * @brief  ESP8266 配置为 STA 模式 TCP 客户端（支持透传）
+  * @note   完成 WiFi 连接、TCP 服务器创建等初始化流程
+  * @param  无
+  * @retval 无
+  */
+void ESP8266_StaTcpClient(void);
+/**
+  * @brief  ESP8266 退出透传模式
+  * @note   通过发送 "+++" 指令退出，需提前延时确保数据发送完成，避免指令被透传
+  * @param  无
+  * @retval 无
+  */
+void ESP8266_ExitUnvarnishSend(void);
+/**
+  * @brief  ESP8266 透传模式
+  * @note   通过发送 "+++" 指令退出，需提前延时确保数据发送完成，避免指令被透传
+  * @param  无
+  * @retval 无
+  */
+bool ESP8266_Enter_Transparent_Mode(void);
+/**
+  * @brief  获取 ESP8266 整体网络连接状态（适用于单连接场景）
+  * @note   返回状态码：2=已获取 IP，3=已建立连接，4=连接断开，0=获取失败
+  * @param  无
+  * @retval uint8_t：网络连接状态码
+  */
+uint8_t ESP8266_Get_LinkStatus(void);
+
+
+/**
+  * @brief  配置 ESP8266 是否启用多连接模式
+  * @note   多连接模式下支持同时建立多个 TCP/UDP 连接（最多 5 个）
+  * @param  enumEnUnvarnishTx：功能使能状态（ENABLE=启用，DISABLE=禁用）
+  * @retval bool：true=多连接配置成功，false=配置失败
+  */
+bool ESP8266_Enable_MultipleId(FunctionalState enumEnUnvarnishTx);
+
+/**
+  * @brief  ESP8266 连接外部 mqtt 服务器
+  * @param  enumE：网络协议枚举（mqtt 协议）
+  * @param  ip：服务器 IP 地址
+  * @param  ComNum：服务器端口号字
+  * @param  id：连接 ID（0-4 对应多连接，5 对应单连接）
+  * @retval bool：true=连接成功，false=连接失败（IP/端口错误/网络不可达等）
+  */
+bool ESP8266_Link_Server(ENUM_NetPro_TypeDef enumE, char *ip, char *ComNum, ENUM_ID_NO_TypeDef id);
+
+
+// 连接公共 MQTT 服务器（安可信固件，单连接模式）
+void ESP8266_Aithinker_MQTT_Example(void);
+//ESP8266 订阅 OneNET 系统主题（适配 AT+MQTTSUB 指令，宏定义可灵活修改）
+bool ESP8266_MQTT_Subscribe_OneNET(void);
+// 主循环（或独立解析任务）：解析缓冲区数据
+void main_loop_task(void);
+//ESP8266 上传属性数据到 OneNET（符合指定 JSON 格式）
+bool ESP8266_AT_MQTT_Publish_Exact_Format(bool Alarm, bool led, uint8_t light);
+/**
+ * @brief 解析 OneNET MQTT 下发的属性设置指令（+MQTTSUBRECV 报文），结果存入全局变量
+ * @note 1. 输入示例："+MQTTSUBRECV:0,\"$sys/IeHhID6vH1/1/thing/property/set\",74,{\"id\":\"20\",\"version\":\"1.0\",\"params\":{\"Alarm\":false,\"led\":true,\"light\":88}}"
+ *       2. 解析结果存入全局变量 g_OneNET_Property_Data，不做实时硬件控制，供后续项目使用
+ *       3. 解析成功后设置 is_updated 为 true，标记有新数据下发
+ * @param recv_buf: 收到的完整 MQTT 订阅报文（UART1 中断接收的原始数据）
+ * @retval void
+ */
+void ESP8266_Parse_OneNET_Property(char *recv_buf);
+
+
+/**
+  * @brief  开启或关闭 ESP8266 的 TCP 服务器模式
+  * @param  enumMode：功能状态（ENABLE=开启服务器，DISABLE=关闭服务器）
+  * @param  pPortNum：服务器端口号字符串（如 "8288"）
+  * @param  pTimeOver：服务器超时时间字符串（单位：秒，超时无连接自动关闭）
+  * @retval bool：true=操作成功，false=操作失败
+  */
+bool ESP8266_StartOrShutServer(FunctionalState enumMode, char *pPortNum, char *pTimeOver);
+
+
+/**
+  * @brief  获取 ESP8266 各连接 ID 的网络状态（适用于多连接场景）
+  * @note   返回值为 8 位整数，低 5 位对应 ID0-ID4，某位置 1 表示该 ID 已建立连接
+  * @param  无
+  * @retval uint8_t：连接 ID 状态掩码（如 0x01 表示 ID0 已连接）
+  */
+uint8_t ESP8266_Get_IdLinkStatus(void);
+
+/**
+  * @brief  查询 ESP8266 AP 模式下的热点 IP 地址
+  * @param  pApIp：存储 AP IP 地址的字符数组首地址（需提前分配足够空间）
+  * @param  ucArrayLength：存储 IP 地址的数组长度（建议不小于 16 字节）
+  * @retval uint8_t：0=获取失败，1=获取成功（IP 地址已存入 pApIp）
+  */
+uint8_t ESP8266_Inquire_ApIp(char *pApIp, uint8_t ucArrayLength);
+
+
+
+/**
+  * @brief  ESP8266 发送字符串数据（支持透传/非透传模式）
+  * @param  enumEnUnvarnishTx：透传模式使能状态（ENABLE=透传，DISABLE=非透传）
+  * @param  pStr：待发送的字符串数据（不可为空）
+  * @param  ulStrLength：待发送字符串的字节长度
+  * @param  ucId：发送数据的连接 ID（透传模式下无效）
+  * @retval bool：true=数据发送成功，false=发送失败
+  */
+bool ESP8266_SendString(FunctionalState enumEnUnvarnishTx, char *pStr, uint32_t ulStrLength, ENUM_ID_NO_TypeDef ucId);
+
+/**
+  * @brief  ESP8266 接收字符串数据（支持透传/非透传模式）
+  * @note   透传模式下以 "\r\n" 为接收结束符，非透传模式识别 "+IPD" 数据帧标识
+  * @param  enumEnUnvarnishTx：透传模式使能状态（ENABLE=透传，DISABLE=非透传）
+  * @retval char*：接收成功返回数据缓冲区首地址，失败返回 NULL
+  */
+char *ESP8266_ReceiveString(FunctionalState enumEnUnvarnishTx);
+
+bool ESP8266_AT_MQTT_Publish_OneJSON(bool Alarm, bool led, uint8_t light, int64_t timestamp);
+bool ESP8266_MQTT_Subscribe_OneNET_Repaly(void);
+bool ESP8266_Bind_OneNET_Report_Topic_With_Cmd(void);
+bool ESP8266_Transparent_Send_Pure_JSON_With_Topic(void);
+bool ESP8266_AT_MQTT_Publish_Raw(bool Alarm, bool led, uint8_t light);
+/******************************* 头文件结束标记 ***************************/
+#endif /* __ESP8266_H__ */
