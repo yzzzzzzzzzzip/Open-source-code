@@ -23,4 +23,4 @@ ota/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal_uart.h \
   ..\Core\Inc\dma.h ..\Core\Inc\i2c.h ..\Core\Inc\spi.h \
   ..\Core\Inc\usart.h ..\Core\Inc\gpio.h ..\APP\debug_printf.h \
-  ..\APP\AT24.h ..\APP\W25Q32.h
+  ..\APP\AT24.h ..\APP\W25Q32.h ..\APP\esp8266.h ..\APP\ota.h

@@ -6,10 +6,16 @@
 #include "stm32f1xx_hal_spi.h" 
 #include "stdio.h"
 #include "string.h"
+#include "at24.h"
 // 前置声明（根据MCU型号调整）
 extern SPI_HandleTypeDef hspi1;
 
 // ==================== 1. 指令定义 ====================
+// W25Q32相关宏
+#define W25Q32_SECTOR_SIZE       4096    // 扇区大小（必须先擦除再写入）
+#define W25Q32_PAGE_SIZE         256     // 页大小（单次最多写256字节）
+#define OTA_FLASH_START_ADDR     0x000000 // OTA固件存储起始地址（根据你的硬件调整）
+
 #define W25X_WriteEnable        0x06  // 写使能
 #define W25X_WriteDisable       0x04  // 写禁止
 #define W25X_ReadStatusReg      0x05  // 读状态寄存器
@@ -49,4 +55,7 @@ void SPI_Flash_Write_Page(uint32_t WriteAddr, uint16_t NumByteToWrite, uint8_t* 
 // 测试函数（逻辑不变，更优雅）
 uint8_t W25Q64_Test_ReadWrite(void);
 void SPI_Flash_Wait_Busy(void);  
+void W25Q32_Print_OTA_Data(uint32_t start_addr, uint16_t len);
+void W25Q32_Print_OTA_All_Data(uint32_t start_addr, uint32_t total_len, uint16_t per_line, uint16_t per_chunk);
+#define W25Q32_Print_OTA_Firmware(total_size)  W25Q32_Print_OTA_All_Data(OTA_FLASH_START_ADDR, total_size, 16, 512)
 #endif // W25Q32_H

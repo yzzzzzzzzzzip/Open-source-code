@@ -26,6 +26,8 @@
 "ota\at24.o"
 "ota\w25q32.o"
 "ota\debug_printf.o"
+"ota\esp8266.o"
+"ota\ota.o"
 --library_type=microlib --strict --scatter "OTA\OTA.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers

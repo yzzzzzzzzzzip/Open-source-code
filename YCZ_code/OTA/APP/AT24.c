@@ -117,3 +117,52 @@ HAL_StatusTypeDef AT24C64_Read_Multi(uint16_t addr, uint8_t *buf, uint16_t len)
                          AT24C64_ADDR_SIZE, buf, len, I2C_TIMEOUT);
 }
 
+// 将固件大小存储到AT24C64
+HAL_StatusTypeDef AT24C64_Store_Firmware_Size(uint32_t firmware_size) {
+    uint8_t size_buffer[4];
+    
+    // 将uint32_t转换为4个字节（小端格式）
+    size_buffer[0] = (uint8_t)(firmware_size & 0xFF);           // 最低字节
+    size_buffer[1] = (uint8_t)((firmware_size >> 8) & 0xFF);    // 次低字节
+    size_buffer[2] = (uint8_t)((firmware_size >> 16) & 0xFF);   // 次高字节
+    size_buffer[3] = (uint8_t)((firmware_size >> 24) & 0xFF);   // 最高字节
+    
+    printf("存储为字节: 0x%02X 0x%02X 0x%02X 0x%02X\n", 
+           size_buffer[0], size_buffer[1], size_buffer[2], size_buffer[3]);
+    
+    // 写入到AT24C64
+    HAL_StatusTypeDef status = AT24C64_Write_Multi(FIRMWARE_SIZE_ADDR, size_buffer, 4);
+    
+    if (status == HAL_OK) {
+        printf("固件大小成功存储到AT24C64地址: 0x%04X\n", FIRMWARE_SIZE_ADDR);
+    } else {
+        printf("存储失败! 状态: %d\n", status);
+    }
+    
+    return status;
+}
+
+// 从AT24C64读取固件大小
+HAL_StatusTypeDef AT24C64_Read_Firmware_Size(uint32_t *firmware_size) {
+    uint8_t size_buffer[4];
+    
+    // 从AT24C64读取4个字节
+    HAL_StatusTypeDef status = AT24C64_Read_Multi(FIRMWARE_SIZE_ADDR, size_buffer, 4);
+    
+    if (status != HAL_OK) {
+        printf("读取失败! 状态: %d\n", status);
+        return status;
+    }
+    
+    // 将4个字节组合为uint32_t（小端格式）
+    *firmware_size = (uint32_t)size_buffer[0] | 
+                    ((uint32_t)size_buffer[1] << 8) | 
+                    ((uint32_t)size_buffer[2] << 16) | 
+                    ((uint32_t)size_buffer[3] << 24);
+    
+    printf("从AT24C64地址: 0x%04X 读取字节: 0x%02X 0x%02X 0x%02X 0x%02X\n", 
+           FIRMWARE_SIZE_ADDR, 
+           size_buffer[0], size_buffer[1], size_buffer[2], size_buffer[3]);
+    
+    return HAL_OK;
+}

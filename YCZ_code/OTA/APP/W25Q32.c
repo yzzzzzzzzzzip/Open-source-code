@@ -172,3 +172,131 @@ uint8_t W25Q64_Test_ReadWrite(void)
     }
     return 0;
 }
+/**
+ * @brief 读取并打印W25Q32中指定地址的固件数据（十六进制）
+ * @param start_addr 读取起始地址（需与OTA_FLASH_START_ADDR对应，如0x000000）
+ * @param len        读取长度（建议256的倍数，如256、512等）
+ */
+void W25Q32_Print_OTA_Data(uint32_t start_addr, uint16_t len)
+{
+    if (len == 0)
+    {
+        printf("【W25Q32】读取长度不能为0！");
+        return;
+    }
+
+    // 分配读取缓冲区（最大一次读512字节，避免栈溢出）
+    uint8_t read_buf[512] = {0};
+    if (len > sizeof(read_buf))
+    {
+        printf("【W25Q32】单次读取长度不能超过512字节！");
+        return;
+    }
+
+    // 从Flash读取数据
+    SPI_Flash_Read(start_addr, len, read_buf);
+    printf("【W25Q32】读取地址：0x%06X，长度：%d 字节，数据：", start_addr, len);
+
+    // 按16字节一行打印（和之前固件打印格式一致）
+    char temp_hex_buf[64] = {0};
+    for (uint16_t i = 0; i < len; i++)
+    {
+        if (i % 16 == 0)
+        {
+            memset(temp_hex_buf, 0, sizeof(temp_hex_buf));
+            snprintf(temp_hex_buf, sizeof(temp_hex_buf)-1, "0x%04X: ", start_addr + i);
+        }
+
+        uint16_t remain = sizeof(temp_hex_buf) - strlen(temp_hex_buf) - 1;
+        if (remain >= 3)
+        {
+            snprintf(&temp_hex_buf[strlen(temp_hex_buf)], remain, "%02X ", read_buf[i]);
+        }
+
+        if ((i % 16 == 15) || (i == len - 1))
+        {
+            printf("%s", temp_hex_buf);
+        }
+    }
+    printf("【W25Q32】数据打印完成！");
+}
+/**
+ * @brief 批量读取并打印W25Q32中OTA固件数据（支持大长度分块打印）
+ * @param start_addr 读取起始地址（如OTA_FLASH_START_ADDR=0x000000）
+ * @param total_len  读取总长度（如固件总大小7360字节）
+ * @param per_line   每行打印字节数（建议16，和之前格式一致）
+ * @param per_chunk  每次打印块大小（建议512，避免串口刷屏）
+ */
+void W25Q32_Print_OTA_All_Data(uint32_t start_addr, uint32_t total_len, uint16_t per_line, uint16_t per_chunk)
+{
+    // 1. 入参校验
+    if (total_len == 0)
+    {
+        printf("【W25Q32】读取长度不能为0！");
+        return;
+    }
+    if (per_line == 0) per_line = 16;    // 默认每行16字节
+    if (per_chunk == 0) per_chunk = 512; // 默认每块512字节
+
+    printf("=====================================");
+    printf("【W25Q32】开始读取数据：起始地址0x%06X，总长度%d字节", start_addr, total_len);
+    printf("=====================================");
+
+    // 2. 分配读取缓冲区（栈区安全大小）
+    uint8_t read_buf[1024] = {0}; // 最大单次读1024字节
+    uint32_t read_offset = 0;     // 已读取的偏移量
+
+    // 3. 分块读取+打印
+    while (read_offset < total_len)
+    {
+        // 计算当前块的读取长度（不超过缓冲区/剩余长度）
+        uint16_t current_read_len = (total_len - read_offset) > sizeof(read_buf) ? 
+                                    sizeof(read_buf) : (total_len - read_offset);
+        // 限制为per_chunk的整数倍（避免频繁打印）
+        current_read_len = (current_read_len / per_chunk) * per_chunk;
+        if (current_read_len == 0) current_read_len = (uint16_t)(total_len - read_offset);
+
+        // 4. 读取当前块数据
+        uint32_t current_addr = start_addr + read_offset;
+        SPI_Flash_Read(current_addr, current_read_len, read_buf);
+        printf("【W25Q32】块%d：地址0x%06X - 0x%06X，长度%d字节",
+                          (read_offset / per_chunk) + 1,
+                          current_addr, current_addr + current_read_len - 1,
+                          current_read_len);
+
+        // 5. 按行打印当前块数据（格式和固件下载一致）
+        char temp_hex_buf[128] = {0};
+        for (uint16_t i = 0; i < current_read_len; i++)
+        {
+            // 每行开头打印地址+重置缓冲区
+            if (i % per_line == 0)
+            {
+                memset(temp_hex_buf, 0, sizeof(temp_hex_buf));
+                snprintf(temp_hex_buf, sizeof(temp_hex_buf)-1, "0x%04X: ", current_addr + i);
+            }
+
+            // 拼接十六进制字节（XX 格式）
+            uint16_t remain = sizeof(temp_hex_buf) - strlen(temp_hex_buf) - 1;
+            if (remain >= 3)
+            {
+                snprintf(&temp_hex_buf[strlen(temp_hex_buf)], remain, "%02X ", read_buf[i]);
+            }
+
+            // 每行结束/最后一行打印
+            if ((i % per_line == per_line - 1) || (i == current_read_len - 1))
+            {
+                printf("%s", temp_hex_buf);
+            }
+        }
+
+        // 6. 更新偏移量+短暂延时（避免串口溢出）
+        read_offset += current_read_len;
+        HAL_Delay(100); // 每打印一块延时100ms
+    }
+
+    printf("=====================================");
+    printf("【W25Q32】全部数据读取打印完成！总计%d字节", total_len);
+    printf("=====================================");
+}
+
+// 简化版调用宏（适配你的OTA场景）

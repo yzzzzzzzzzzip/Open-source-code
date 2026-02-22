@@ -28,3 +28,27 @@ void debug_print(const char* format, ...)
 
 }
 
+/*void UART2_Print(const char *fmt, ...)
+{
+    // 1. 合法性检查：格式化字符串不能为空，避免空指针操作
+    if (fmt == NULL)
+    {
+        return;
+    }
+
+    // 2. 清空串口2发送缓冲区（避免上一次打印数据残留，导致乱码）
+    memset(uart2_tx_buffer, 0, UART2_TX_BUF_MAX_LEN);
+
+    // 3. 处理可变参数（实现格式化输出，替代 snprintf，支持多参数）
+    va_list args;          // 定义可变参数列表变量
+    va_start(args, fmt);   // 初始化可变参数列表，指向 fmt 后的第一个参数
+    // 格式化填充缓冲区：vsnprintf 支持可变参数，更适合封装格式化函数
+    vsnprintf(uart2_tx_buffer, UART2_TX_BUF_MAX_LEN - 1, fmt, args);  // 预留1字节防止溢出
+    va_end(args);          // 结束可变参数列表处理，释放资源
+
+    // 4. 自动添加换行符 \r\n（符合串口调试习惯，无需手动传入）
+    strcat(uart2_tx_buffer, "\r\n");
+
+    // 5. HAL 库标准阻塞发送，打印到串口2
+    HAL_UART_Transmit(&huart2, (uint8_t*)uart2_tx_buffer, strlen(uart2_tx_buffer), UART_TIMEOUT_MS);
+}*/
